@@ -1,0 +1,16 @@
+# Archivos de compilación y binarios generados
+build/
+*.elf
+*.nro
+*.nacp
+*.map
+*.lst
+*.o
+*.d
+
+# Archivos extra empaquetados
+*.nsp
+
+# Ignorar archivos del sistema operativo
+.DS_Store
+Thumbs.db
