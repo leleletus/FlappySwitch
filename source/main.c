@@ -3,13 +3,18 @@
 #include <stdlib.h>
 #include <string.h>
 #include "draw.h"
+#include "audio.h"
 #include "bitmapPhotos.h"
 
-// Resolución lógica y física
+// Resolución lógica
 #define GAME_W    84
 #define GAME_H    48
-#define SCREEN_W 1280
-#define SCREEN_H  720
+
+// Resoluciones físicas de la consola
+static u32 screen_w = 1280;
+static u32 screen_h = 720;
+#define SCREEN_W screen_w
+#define SCREEN_H screen_h
 
 // Sprites originales (sin escalar)
 #define TUBE_W    6
@@ -30,7 +35,7 @@
 #define MIN_PIPE_SPACING 30
 
 // Umbral stick para navegar menús
-#define JOY_THRESH 30
+#define JOY_THRESH 16000
 
 // Estados de la aplicación
 typedef enum {
@@ -175,32 +180,42 @@ int main(void) {
   framebufferMakeLinear(&fb);
   padConfigureInput(1, HidNpadStyleSet_NpadStandard);
   padInitializeDefault(&pad);
+  audio_init();
 
   // 5) Primer reset parcial (mantiene pantalla de bienvenida)
   reset_game(false);
 
+  s16 prev_stick_y = 0;
+
   // 6) Bucle principal
   while (appletMainLoop()) {
-        padUpdate(&pad);
+    u64 tick_start = armGetSystemTick();
+
+    padUpdate(&pad);
     u64 down = padGetButtonsDown(&pad);
 
     HidAnalogStickState stick = padGetStickPos(&pad, 0);
-    s8 stick_y = stick.y;
+    s16 stick_y = stick.y;
+    
+    // Joystick Y is positive UP in libnx, but let's allow both D-pad and analog stick
+    bool stick_up = (stick_y > JOY_THRESH) && !(prev_stick_y > JOY_THRESH);
+    bool stick_down = (stick_y < -JOY_THRESH) && !(prev_stick_y < -JOY_THRESH);
+    prev_stick_y = stick_y;
 
     // Cada estado gestiona sus propias pulsaciones de “+”
     // Inicia frame
     u32 stride;
     u8* fbptr = framebufferBegin(&fb, &stride);
-    clear_buffer(fbptr, SCREEN_W, SCREEN_H, 0, 0, 0);
+    clear_buffer(fbptr, stride, SCREEN_W, SCREEN_H, 0, 0, 0);
 
     switch (estado) {
       // ───────────────────────────────────────────────
       case EST_BIENVENIDA:
         // Dibuja el fondo
-        draw_bitmap_scaled(fbptr, SCREEN_W, SCREEN_H,
+        draw_bitmap_scaled(fbptr, stride, SCREEN_W, SCREEN_H,
                           offX, offY,
                           fondo_bienvenida,
-                          GAME_W, GAME_H, scale);
+                          GAME_W, GAME_H, scale, 255, 255, 255);
 
         // 1) Actualiza animación del monstruo
         if (++welcomeFrameCounter > 12) {
@@ -222,11 +237,11 @@ int main(void) {
 
 
         // 3) Dibuja el monstruo animado
-        draw_bitmap_scaled(fbptr, SCREEN_W, SCREEN_H,
+        draw_bitmap_scaled(fbptr, stride, SCREEN_W, SCREEN_H,
                           monsterX, monsterY,
                           mframe,
                           MON_W, MON_H,
-                          renderScale);
+                          renderScale, 255, 255, 0);
 
         // 4) Si se pulsa cualquier botón, pasamos al menú
         if (down) estado = EST_MENU;
@@ -234,20 +249,25 @@ int main(void) {
 
       // ───────────────────────────────────────────────
       case EST_MENU: {
-        if ((down & HidNpadButton_Up)   || stick_y < -JOY_THRESH)
+        if ((down & HidNpadButton_Up)   || stick_up) {
           menuIndex = (menuIndex + OPT_COUNT - 1) % OPT_COUNT;
-        if ((down & HidNpadButton_Down) || stick_y >  JOY_THRESH)
+          audio_play_note(300, 50);
+        }
+        if ((down & HidNpadButton_Down) || stick_down) {
           menuIndex = (menuIndex + 1) % OPT_COUNT;
+          audio_play_note(300, 50);
+        }
 
         const u8* bmp =
           menuIndex == OPT_PLAY  ? menu_select_play  :
           menuIndex == OPT_SCORE ? menu_select_score:
                                    menu_select_level;
-        draw_bitmap_scaled(fbptr, SCREEN_W, SCREEN_H,
+        draw_bitmap_scaled(fbptr, stride, SCREEN_W, SCREEN_H,
                            offX, offY,
-                           bmp, GAME_W, GAME_H, scale);
+                           bmp, GAME_W, GAME_H, scale, 255, 255, 255);
 
         if (down & HidNpadButton_A) {
+          audio_play_note(440, 100);
           if (menuIndex == OPT_PLAY) {
             reset_game(false);
             estado = EST_JUEGO;
@@ -266,6 +286,7 @@ int main(void) {
       // ───────────────────────────────────────────────
       case EST_LEVEL:
         if (down & HidNpadButton_B) {
+          audio_play_note(300, 100);
           estado = EST_MENU;
           break;
         }
@@ -273,23 +294,28 @@ int main(void) {
           in_level  = true;
           level_sel = dificultad;
         }
-        if ((down & HidNpadButton_Up)   || stick_y < -JOY_THRESH)
+        if ((down & HidNpadButton_Up)   || stick_up) {
           level_sel = (Dificultad)((level_sel + 2) % 3);
-        if ((down & HidNpadButton_Down) || stick_y >  JOY_THRESH)
+          audio_play_note(300, 50);
+        }
+        if ((down & HidNpadButton_Down) || stick_down) {
           level_sel = (Dificultad)((level_sel + 1) % 3);
+          audio_play_note(300, 50);
+        }
 
         {
           const u8* bmp =
             level_sel == FACIL  ? nivel_facil  :
             level_sel == MEDIO  ? nivel_mediano:
                                   nivel_dificil;
-          draw_bitmap_scaled(fbptr, SCREEN_W, SCREEN_H,
+          draw_bitmap_scaled(fbptr, stride, SCREEN_W, SCREEN_H,
                              offX, offY,
-                             bmp, GAME_W, GAME_H, scale);
+                             bmp, GAME_W, GAME_H, scale, 255, 255, 255);
         }
 
         // Al confirmar nivel: reset TOTAL y jugar
         if (down & HidNpadButton_A) {
+          audio_play_note(550, 200);
           dificultad = level_sel;
           reset_game(true);
           estado = EST_JUEGO;
@@ -299,7 +325,7 @@ int main(void) {
       // ───────────────────────────────────────────────
       case EST_SCORE:
         // 1) Limpia la pantalla
-        clear_buffer(fbptr, SCREEN_W, SCREEN_H, 0, 0, 0);
+        clear_buffer(fbptr, stride, SCREEN_W, SCREEN_H, 0, 0, 0);
 
         // 2) Parámetros de texto
         uint32_t white    = 0xFFFFFFFF;
@@ -357,11 +383,13 @@ int main(void) {
       case EST_JUEGO: {
         // Pausa
         if (down & HidNpadButton_Plus) {
+          audio_play_note(600, 100);
           estado = EST_PAUSA;
           break;
         }
         // Salto
         if (down & HidNpadButton_A) {
+          audio_play_note(880, 100);
           velY = -jumpImpulsos[dificultad];
         }
         // Gravedad y mover
@@ -385,6 +413,7 @@ int main(void) {
           if (!scored[i] && posX_obs[i] + TUBE_W < 0) {
             puntaje++;
             scored[i] = true;
+            audio_play_note(1200, 150); // Sonido de punto
             if (puntaje > mejores[dificultad]) {
               mejores[dificultad] = puntaje;
             }
@@ -454,6 +483,7 @@ int main(void) {
         // Vidas / RETRY
         if (choque) {
           choque = 0;
+          audio_play_note(150, 400); // Sonido de choque grave
 
           // 1) Guarda el puntaje de esta vida
           if (vidaIndex < 3) {
@@ -492,33 +522,33 @@ int main(void) {
         }
 
         // Render de juego
-        draw_bitmap_scaled(fbptr, SCREEN_W, SCREEN_H,
+        draw_bitmap_scaled(fbptr, stride, SCREEN_W, SCREEN_H,
                            offX, offY,
                            BACKGROUND,
-                           GAME_W, GAME_H, scale);
+                           GAME_W, GAME_H, scale, 135, 206, 235); // Cielo
         for (int i = 0; i < 3; i++) {
-          draw_bitmap_scaled(fbptr, SCREEN_W, SCREEN_H,
+          draw_bitmap_scaled(fbptr, stride, SCREEN_W, SCREEN_H,
                              offX + posX_obs[i]*scale,
                              offY + posY_obs_down[i]*scale,
                              tuberia_abajo,
-                             TUBE_W, TUBE_H_D, scale);
-          draw_bitmap_scaled(fbptr, SCREEN_W, SCREEN_H,
+                             TUBE_W, TUBE_H_D, scale, 0, 255, 0); // Tubo verde
+          draw_bitmap_scaled(fbptr, stride, SCREEN_W, SCREEN_H,
                              offX + posX_obs[i]*scale,
                              offY + posY_obs_up[i]*scale,
                              tuberia_arriba,
-                             TUBE_W, TUBE_H_U, scale);
+                             TUBE_W, TUBE_H_U, scale, 0, 255, 0); // Tubo verde
         }
         {
           const u8* mframe =
             frameAnim == 0 ? M_arriba :
             frameAnim == 1 ? M_medio  :
                              M_bajo;
-          draw_bitmap_scaled(fbptr, SCREEN_W, SCREEN_H,
+          draw_bitmap_scaled(fbptr, stride, SCREEN_W, SCREEN_H,
                              offX,
                              offY + posY_monstruo * renderScale,
                              mframe,
                              MON_W, MON_H,
-                             renderScale);
+                             renderScale, 255, 255, 0); // Pájaro amarillo
         }
         break;
       }
@@ -526,48 +556,50 @@ int main(void) {
       // ─────────── EST_PAUSA ────────────────────────────
       case EST_PAUSA:
         // Redibuja el frame congelado
-        draw_bitmap_scaled(fbptr, SCREEN_W, SCREEN_H,
+        draw_bitmap_scaled(fbptr, stride, SCREEN_W, SCREEN_H,
                            offX, offY,
                            BACKGROUND,
-                           GAME_W, GAME_H, scale);
+                           GAME_W, GAME_H, scale, 135, 206, 235);
         for (int i = 0; i < 3; i++) {
-          draw_bitmap_scaled(fbptr, SCREEN_W, SCREEN_H,
+          draw_bitmap_scaled(fbptr, stride, SCREEN_W, SCREEN_H,
                              offX + posX_obs[i]*scale,
                              offY + posY_obs_down[i]*scale,
                              tuberia_abajo,
-                             TUBE_W, TUBE_H_D, scale);
-          draw_bitmap_scaled(fbptr, SCREEN_W, SCREEN_H,
+                             TUBE_W, TUBE_H_D, scale, 0, 255, 0);
+          draw_bitmap_scaled(fbptr, stride, SCREEN_W, SCREEN_H,
                              offX + posX_obs[i]*scale,
                              offY + posY_obs_up[i]*scale,
                              tuberia_arriba,
-                             TUBE_W, TUBE_H_U, scale);
+                             TUBE_W, TUBE_H_U, scale, 0, 255, 0);
         }
         {
           const u8* mframe =
             frameAnim == 0 ? M_arriba :
             frameAnim == 1 ? M_medio  :
                              M_bajo;
-          draw_bitmap_scaled(fbptr, SCREEN_W, SCREEN_H,
+          draw_bitmap_scaled(fbptr, stride, SCREEN_W, SCREEN_H,
                              offX,
                              offY + posY_monstruo * renderScale,
                              mframe,
                              MON_W, MON_H,
-                             renderScale);
+                             renderScale, 255, 255, 0);
         }
         // Reanudar con +
         if (down & HidNpadButton_Plus) {
+          audio_play_note(880, 100);
           estado = EST_JUEGO;
         }
         break;
 
       // ─────────── EST_RETRY ────────────────────────────
       case EST_RETRY:
-        draw_bitmap_scaled(fbptr, SCREEN_W, SCREEN_H,
+        draw_bitmap_scaled(fbptr, stride, SCREEN_W, SCREEN_H,
                            offX, offY,
                            retry,
-                           GAME_W, GAME_H, scale);
+                           GAME_W, GAME_H, scale, 255, 100, 100); // Rojo para retry
         // Reanudar con +
         if (down & HidNpadButton_Plus) {
+          audio_play_note(550, 100);
           reset_game(false);
           estado = EST_JUEGO;
         }
@@ -578,9 +610,14 @@ int main(void) {
     }
 
     framebufferEnd(&fb);
-    svcSleepThread(16666667ULL); // ~60fps
+    u64 tick_end = armGetSystemTick();
+    u64 elapsed_ns = (tick_end - tick_start) * 1000000000ULL / armGetSystemTickFreq();
+    if (elapsed_ns < 16666667ULL) {
+        svcSleepThread(16666667ULL - elapsed_ns); // ~60fps
+    }
   }
 
+  audio_exit();
   framebufferClose(&fb);
   return 0;
 }

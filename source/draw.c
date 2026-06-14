@@ -140,38 +140,42 @@ void drawString(uint8_t* fbptr, uint32_t stride,
 }
 
 // Limpia todo el framebuffer a (r,g,b)
-void clear_buffer(u8* fb, u32 screen_w, u32 screen_h,
+void clear_buffer(u8* fb, u32 stride, u32 screen_w, u32 screen_h,
                   u8 r, u8 g, u8 b) {
-    u32 total = screen_w * screen_h;
-    for (u32 i = 0; i < total; i++) {
-        fb[4*i + 0] = r;
-        fb[4*i + 1] = g;
-        fb[4*i + 2] = b;
-        fb[4*i + 3] = 255;
+    u32 color = (255 << 24) | (b << 16) | (g << 8) | r;
+    for (u32 y = 0; y < screen_h; y++) {
+        u32* row = (u32*)(fb + y * stride);
+        for (u32 x = 0; x < screen_w; x++) {
+            row[x] = color;
+        }
     }
 }
 
 
-// Dibuja un bitmap monocromo Nokia5110 escalado en RGBA framebuffer
+// Dibuja un bitmap monocromo Nokia5110 escalado en RGBA framebuffer con color
 void draw_bitmap_scaled(
     u8* fb,
+    u32 stride,
     u32 screen_w,
     u32 screen_h,
     int x, int y,
     const u8* bitmap,
     int w,    // ancho del bitmap en columnas
     int h,    // alto del bitmap en píxeles (múltiplo de 8)
-    int scale
+    int scale,
+    u8 r_col, u8 g_col, u8 b_col
 ) {
+    u32 color = (0xFF << 24) | (b_col << 16) | (g_col << 8) | r_col;
     int pages = h / 8;  // cada “página” tiene 8 filas de píxeles
     for (int page = 0; page < pages; page++) {
         for (int bx = 0; bx < w; bx++) {
             // byte que contiene 8 píxeles verticales en la columna bx
-            u8 b = bitmap[page * w + bx];
+            u8 b_data = bitmap[page * w + bx];
+            if (!b_data) continue; // Optimización si es 0
 
             // Recorre cada uno de los 8 bits verticales
             for (int bit = 0; bit < 8; bit++) {
-                if (!(b & (1 << bit))) continue;
+                if (!(b_data & (1 << bit))) continue;
 
                 // Coordenadas de la “célula” del bit
                 int px_base = x + bx * scale;
@@ -180,15 +184,13 @@ void draw_bitmap_scaled(
                 // Dibuja el cuadrado de tamaño scale×scale
                 for (int dy = 0; dy < scale; dy++) {
                     int py_line = py_base + dy;
-                    if (py_line < 0 || py_line >= (int)screen_h) break;
+                    if (py_line < 0 || py_line >= (int)screen_h) continue;
+                    
+                    u32* row = (u32*)(fb + py_line * stride);
                     for (int dx = 0; dx < scale; dx++) {
                         int px_line = px_base + dx;
-                        if (px_line < 0 || px_line >= (int)screen_w) break;
-                        u32 idx = (py_line * screen_w + px_line) * 4;
-                        fb[idx + 0] = 0xFF;
-                        fb[idx + 1] = 0xFF;
-                        fb[idx + 2] = 0xFF;
-                        fb[idx + 3] = 0xFF;
+                        if (px_line < 0 || px_line >= (int)screen_w) continue;
+                        row[px_line] = color;
                     }
                 }
             }
@@ -224,10 +226,11 @@ void update_animation(Animation* anim) {
     }
 }
 
-void draw_animation(u8* fb, u32 screen_w, u32 screen_h,
+void draw_animation(u8* fb, u32 stride, u32 screen_w, u32 screen_h,
                     int x, int y, Animation* anim) {
-    draw_bitmap_scaled(fb, screen_w, screen_h,
+    draw_bitmap_scaled(fb, stride, screen_w, screen_h,
         x, y,
         anim->frames[anim->frame_index],
-        anim->width, anim->height, anim->scale);
+        anim->width, anim->height, anim->scale,
+        255, 255, 255);
 }

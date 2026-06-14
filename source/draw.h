@@ -25,25 +25,27 @@ void init_animation(Animation* anim,
 void update_animation(Animation* anim);
 
 // Dibuja el frame actual de la animación
-void draw_animation(u8* fb, u32 screen_w, u32 screen_h,
+void draw_animation(u8* fb, u32 stride, u32 screen_w, u32 screen_h,
                     int x, int y, Animation* anim);
 
 // Limpia framebuffer a color RGB
-void clear_buffer(u8* fb, u32 screen_w, u32 screen_h,
+void clear_buffer(u8* fb, u32 stride, u32 screen_w, u32 screen_h,
                   u8 r, u8 g, u8 b);
 
 
-// Dibuja bitmap monocromo estilo Nokia5110 escalado
+// Dibuja bitmap monocromo estilo Nokia5110 escalado con color personalizado
 // bitmap: arreglo de (w * (h/8)) bytes, cada byte = 8 píxeles verticales
 void draw_bitmap_scaled(
     u8* fb,
+    u32 stride,
     u32 screen_w,
     u32 screen_h,
     int x, int y,
     const u8* bitmap,
     int w,      // ancho en bytes del bitmap
     int h,      // alto en píxeles (múltiplo de 8)
-    int scale   // factor de escala
+    int scale,  // factor de escala
+    u8 r_col, u8 g_col, u8 b_col // Color RGB
 );
 
 // Colisión AABB
